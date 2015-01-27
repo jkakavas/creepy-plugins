@@ -1,5 +1,6 @@
 #!/usr/bin/python
 # -*- coding: utf-8 -*-
+import pytz
 from models.InputPlugin import InputPlugin
 import flickrapi
 import datetime
@@ -13,7 +14,7 @@ logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
 fh = logging.FileHandler(os.path.join(os.getcwdu(),'creepy_main.log'))
 fh.setLevel(logging.DEBUG)
-formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+formatter = logging.Formatter('%(levelname)s:%(asctime)s  In %(filename)s:%(lineno)d: %(message)s')
 fh.setFormatter(formatter)
 logger.addHandler(fh)
 class Flickr(InputPlugin):
@@ -123,7 +124,7 @@ class Flickr(InputPlugin):
                         if isinstance(title,str):
                             title = title.decode('utf-8')
                         loc['context'] = u'Photo from flickr  \n Title : %s \n ' % (title)
-                        loc['date'] = datetime.datetime.strptime(photo.attrib['datetaken'], "%Y-%m-%d %H:%M:%S")
+                        loc['date'] = pytz.utc.localize(datetime.datetime.strptime(photo.attrib['datetaken'], "%Y-%m-%d %H:%M:%S"))
                         loc['lat'] = photo.attrib['latitude']
                         loc['lon'] = photo.attrib['longitude']
                         loc['shortName'] = "Unavailable"
@@ -133,7 +134,7 @@ class Flickr(InputPlugin):
                     logger.error(err)
         return locations      
             
-    def returnLocations(self, target, search_params):
+    def returnAnalysis(self, target, search_params):
         photosList = []
         locationsList = []
         try:
@@ -151,7 +152,7 @@ class Flickr(InputPlugin):
                     photosList = results.find('photos').findall('photo')
                     
                 locationsList = self.getLocationsFromPhotos(photosList)
-                return locationsList
+                return locationsList, None
                 
         except FlickrError, err:
             logger.error("Error getting locations from Flickr")
