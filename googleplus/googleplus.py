@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 from models.InputPlugin import InputPlugin
 from oauth2client.client import OAuth2WebServerFlow, AccessTokenCredentials, Credentials
-from apiclient.discovery import build
+from googleapiclient.discovery import build
 import logging
 import os
 import urllib
@@ -12,11 +12,12 @@ from PyQt4.QtGui import QWizard, QWizardPage, QLabel, QLineEdit, QVBoxLayout, QH
 from PyQt4.QtCore import QUrl
 from PyQt4.QtWebKit import QWebView
 from configobj import ConfigObj
+from utilities import GeneralUtilities
 
 #set up logging
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
-fh = logging.FileHandler(os.path.join(os.getcwd(), 'creepy_main.log'))
+fh = logging.FileHandler(os.path.join(GeneralUtilities.getLogDir(), 'creepy_main.log'))
 fh.setLevel(logging.DEBUG)
 formatter = logging.Formatter('%(levelname)s:%(asctime)s  In %(filename)s:%(lineno)d: %(message)s')
 fh.setFormatter(formatter)
@@ -30,10 +31,7 @@ class Googleplus(InputPlugin):
 
     def __init__(self):
         #Try and read the labels file
-        labels_filename = "{0}.labels".format(self.name)
-        labels_file = os.path.join(os.getcwd(), 'plugins', self.name, labels_filename)
-        labels_config = ConfigObj(infile=labels_file)
-        labels_config.create_empty=False
+        labels_config = self.getConfigObj(self.name+'.labels')
         try:
             logger.debug('Trying to load the labels file for the  {0} plugin .'.format(self.name))
             self.labels = labels_config['labels']

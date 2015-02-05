@@ -14,11 +14,12 @@ from tweepy import Cursor
 from configobj import ConfigObj
 from dominate.tags import *
 from collections import Counter
+from utilities import GeneralUtilities
 
 #set up logging
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
-fh = logging.FileHandler(os.path.join(os.getcwd(),'creepy_main.log'))
+fh = logging.FileHandler(os.path.join(GeneralUtilities.getLogDir(),'creepy_main.log'))
 fh.setLevel(logging.DEBUG)
 formatter = logging.Formatter('%(levelname)s:%(asctime)s  In %(filename)s:%(lineno)d: %(message)s')
 fh.setFormatter(formatter)
@@ -30,10 +31,7 @@ class Twitter(InputPlugin):
     
     def __init__(self):
         #Try and read the labels file
-        labels_filename = self.name+".labels"
-        labels_file = os.path.join(os.getcwd(),'plugins', self.name, labels_filename)
-        labels_config = ConfigObj(infile=labels_file)
-        labels_config.create_empty=False
+        labels_config = self.getConfigObj(self.name+'.labels')
         try:
             logger.debug("Trying to load the labels file for the  "+self.name+" plugin .")
             self.labels = labels_config['labels']
@@ -79,7 +77,7 @@ class Twitter(InputPlugin):
     
     def getAuthenticatedAPI(self):
         try:
-            auth = tweepy.auth.OAuthHandler(self.options_string['hidden_application_key'], self.options_string['hidden_application_secret'], secure=True)
+            auth = tweepy.auth.OAuthHandler(self.options_string['hidden_application_key'], self.options_string['hidden_application_secret'])
             auth.set_access_token(self.options_string['hidden_access_token'], self.options_string['hidden_access_token_secret'])
             return tweepy.API(auth)
         except Exception,e:
@@ -88,7 +86,7 @@ class Twitter(InputPlugin):
     
     def runConfigWizard(self):
         try:
-            oAuthHandler = tweepy.OAuthHandler(self.options_string['hidden_application_key'], self.options_string['hidden_application_secret'], secure=True)
+            oAuthHandler = tweepy.OAuthHandler(self.options_string['hidden_application_key'], self.options_string['hidden_application_secret'])
             authorizationURL = oAuthHandler.get_authorization_url(True)
             self.wizard = QWizard()
             page1 = QWizardPage()
@@ -124,10 +122,8 @@ class Twitter(InputPlugin):
             if self.wizard.exec_():
                 try:
                     oAuthHandler.get_access_token(str(self.wizard.field("inputPin").toString()).strip())
-                    access_token = oAuthHandler.access_token.key
-                    access_token_secret = oAuthHandler.access_token.secret
-                    self.options_string['hidden_access_token'] = access_token
-                    self.options_string['hidden_access_token_secret'] = access_token_secret
+                    self.options_string['hidden_access_token'] = oAuthHandler.access_token
+                    self.options_string['hidden_access_token_secret'] = oAuthHandler.access_token_secret
                     self.config.write()
                 except Exception, err:
                     logger.error(err)
@@ -194,7 +190,6 @@ class Twitter(InputPlugin):
         conversionResult = False
         formalTimezoneName = ''
         locations_list = []
-        cnt = 200
         incl_rts = search_params['boolean']['include_retweets']
         excl_rpls = search_params['boolean']['exclude_replies']
         if not self.api:
@@ -231,7 +226,7 @@ class Twitter(InputPlugin):
                 twitterDiv += p('The user is listed in {0} public lists.'.format(str(userObject.listed_count)))
 
             logger.debug("Attempting to retrieve the tweets for user "+target['targetUserid'])
-            tweets = Cursor(self.api.user_timeline, user_id=target['targetUserid'], exclude_replies=excl_rpls, include_rts=incl_rts, count=cnt).items()
+            tweets = Cursor(self.api.user_timeline, user_id=target['targetUserid'], exclude_replies=excl_rpls, include_rts=incl_rts).items()
             logger.debug("Finished retrieving tweets for user "+target['targetUserid'])
             timestamps = []
             repliedTo = []
