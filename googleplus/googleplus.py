@@ -11,7 +11,6 @@ import dateutil.parser
 from PyQt4.QtGui import QWizard, QWizardPage, QLabel, QLineEdit, QVBoxLayout, QHBoxLayout, QMessageBox
 from PyQt4.QtCore import QUrl
 from PyQt4.QtWebKit import QWebView
-from configobj import ConfigObj
 from utilities import GeneralUtilities
 
 #set up logging
@@ -30,7 +29,9 @@ class Googleplus(InputPlugin):
     hasWizard = True
 
     def __init__(self):
-        #Try and read the labels file
+        # Try and read the labels file
+        # load cacerts from the bundled cacerts, otherwise calls in Windows will fail
+        self.http = httplib2.Http(ca_certs=os.path.join(os.getcwd(), 'cacerts.txt'))
         labels_config = self.getConfigObj(self.name+'.labels')
         try:
             logger.debug('Trying to load the labels file for the  {0} plugin .'.format(self.name))
@@ -41,13 +42,13 @@ class Googleplus(InputPlugin):
             logger.exception(err)
         self.config, self.options_string = self.readConfiguration('string_options')
         self.options_boolean = self.readConfiguration('boolean_options')[1]
-        self.service = self.getAuthenticatedService()
+        self.service = None
 
     def searchForTargets(self, search_term):
         possibleTargets = []
         logger.debug('Searching for Targets from Google+ Plugin. Search term is : {0}'.format(search_term))
         try:
-            if not self.service:
+            if self.service is None:
                 self.service = self.getAuthenticatedService()
             peopleResource = self.service.people()
             peopleDocument = peopleResource.search(query=search_term).execute()
@@ -75,12 +76,11 @@ class Googleplus(InputPlugin):
     def getAuthenticatedService(self):
         try:
             credentials = AccessTokenCredentials.new_from_json(self.options_string['hidden_credentials'])
-            http = httplib2.Http()
             if credentials.invalid:
-                http = credentials.refresh(http)
+                self.http = credentials.refresh(self.http)
             else:
-                http = credentials.authorize(http)
-            service = build('plus', 'v1', http=http)
+                self.http = credentials.authorize(self.http)
+            service = build('plus', 'v1', http=self.http)
             return service
         except Exception, e:
             logger.error(e)
@@ -94,6 +94,7 @@ class Googleplus(InputPlugin):
                                        redirect_uri='urn:ietf:wg:oauth:2.0:oob')
             authorizationURL = flow.step1_get_authorize_url()
             self.wizard = QWizard()
+            self.wizard.setWindowTitle("Google+ plugin configuration wizard")
             page1 = QWizardPage()
             page2 = QWizardPage()
             layout1 = QVBoxLayout()
@@ -130,7 +131,7 @@ class Googleplus(InputPlugin):
 
             if self.wizard.exec_():
                 try:
-                    credentials = flow.step2_exchange(str(self.wizard.field('inputCode').toString()).strip())
+                    credentials = flow.step2_exchange(str(self.wizard.field('inputCode').toString()).strip(), self.http)
                     self.options_string['hidden_credentials'] = credentials.to_json()
                     self.config.write()
                 except Exception, err:
@@ -153,7 +154,7 @@ class Googleplus(InputPlugin):
     element contains an optional message for the user
     '''
     def isConfigured(self):
-        if not self.service:
+        if self.service is None:
             self.service = self.getAuthenticatedService()
         try:
             peopleResource = self.service.people()
@@ -166,7 +167,7 @@ class Googleplus(InputPlugin):
 
 
     def returnAnalysis(self, target, search_params):
-        if not self.service:
+        if self.service is None:
             self.service = self.getAuthenticatedService()
         locations_list = []
         try:
@@ -217,6 +218,6 @@ class Googleplus(InputPlugin):
         '''
         if not self.labels:
             return key
-        if not key in self.labels.keys():
+        if key not in self.labels.keys():
             return key
         return self.labels[key]

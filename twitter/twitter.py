@@ -30,7 +30,7 @@ class Twitter(InputPlugin):
     hasWizard = True
     
     def __init__(self):
-        #Try and read the labels file
+        # Try and read the labels file
         labels_config = self.getConfigObj(self.name+'.labels')
         try:
             logger.debug("Trying to load the labels file for the  "+self.name+" plugin .")
@@ -39,18 +39,16 @@ class Twitter(InputPlugin):
             self.labels = None 
             logger.error("Could not load the labels file for the  "+self.name+" plugin .")  
             logger.exception(err) 
-        
-        
-        
-        self.config,self.options_string = self.readConfiguration("string_options")
+
+        self.config, self.options_string = self.readConfiguration("string_options")
         self.options_boolean = self.readConfiguration("boolean_options")[1]
-        self.api = self.getAuthenticatedAPI()
+        self.api = None
     
     def searchForTargets(self, search_term):
         possibleTargets = []
         logger.debug("Searching for Targets from Twitter Plugin. Search term is : "+search_term)
         try:
-            if not self.api:
+            if self.api is None:
                 self.api = self.getAuthenticatedAPI()
             search_results = self.api.search_users(q=search_term)
             if search_results:
@@ -89,6 +87,7 @@ class Twitter(InputPlugin):
             oAuthHandler = tweepy.OAuthHandler(self.options_string['hidden_application_key'], self.options_string['hidden_application_secret'])
             authorizationURL = oAuthHandler.get_authorization_url(True)
             self.wizard = QWizard()
+            self.wizard.setWindowTitle("Twitter plugin configuration wizard")
             page1 = QWizardPage()
             page2 = QWizardPage()
             layout1 = QVBoxLayout()
@@ -169,10 +168,11 @@ class Twitter(InputPlugin):
         try:
             if not self.options_string:
                 self.options_string = self.readConfiguration("string_options")[1]
-            oAuthHandler = tweepy.OAuthHandler(self.options_string['hidden_application_key'], self.options_string['hidden_application_secret'])
-            oAuthHandler.set_access_token(self.options_string['hidden_access_token'], self.options_string['hidden_access_token_secret'])
-            api = tweepy.API(oAuthHandler)
-            logger.debug(api.me().name)
+            if self.api is None:
+                oAuthHandler = tweepy.OAuthHandler(self.options_string['hidden_application_key'], self.options_string['hidden_application_secret'])
+                oAuthHandler.set_access_token(self.options_string['hidden_access_token'], self.options_string['hidden_access_token_secret'])
+                self.api = tweepy.API(oAuthHandler)
+            logger.debug(self.api.me().name)
             return (True, "")
         except Exception, e:
             logger.error("Error authenticating with Twitter API.")
@@ -190,6 +190,8 @@ class Twitter(InputPlugin):
         conversionResult = False
         formalTimezoneName = ''
         locations_list = []
+        twitterDiv = div(id='twitter')
+        twitterDiv += h2('Twitter profile information')
         incl_rts = search_params['boolean']['include_retweets']
         excl_rpls = search_params['boolean']['exclude_replies']
         if not self.api:
@@ -197,8 +199,6 @@ class Twitter(InputPlugin):
         try:
             logger.debug("Attempting to retrieve profile information for "+target['targetUserid'])
             userObject = self.api.get_user(user_id=target['targetUserid'])
-            twitterDiv = div(id='twitter')
-            twitterDiv += h2('Twitter profile information')
             twitterDiv += p('Account was created on {0}'.format(userObject.created_at.strftime("%Y-%m-%d %H:%M:%S %z")))
             if userObject.statuses_count:
                 twitterDiv += p('The user has tweeted {0} times ( including retweets ).'.format(str(userObject.statuses_count)))
@@ -227,7 +227,6 @@ class Twitter(InputPlugin):
 
             logger.debug("Attempting to retrieve the tweets for user "+target['targetUserid'])
             tweets = Cursor(self.api.user_timeline, user_id=target['targetUserid'], exclude_replies=excl_rpls, include_rts=incl_rts).items()
-            logger.debug("Finished retrieving tweets for user "+target['targetUserid'])
             timestamps = []
             repliedTo = []
             retweeted = []
@@ -424,7 +423,7 @@ class Twitter(InputPlugin):
         '''
         if not self.labels:
             return key
-        if not key in self.labels.keys():
+        if key not in self.labels.keys():
             return key
         return self.labels[key]
 

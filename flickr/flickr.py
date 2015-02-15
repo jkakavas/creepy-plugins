@@ -38,7 +38,7 @@ class Flickr(InputPlugin):
             logger.error("Could not load the labels file for the  " + self.name + " plugin .")
             logger.exception(err)
         self.config, self.options_string = self.readConfiguration("string_options")
-        self.api = self.getAuthenticatedAPI()
+        self.api = None
 
     def getAuthenticatedAPI(self):
         try:
@@ -56,10 +56,10 @@ class Flickr(InputPlugin):
 
 
     def searchForTargets(self, search_term):
-
+        if self.api is None:
+            self.api = self.getAuthenticatedAPI()
         possibleTargets = []
         try:
-
             # Try to distinguish between mail and username in the search term
             if re.match("[\w\-\.+]+@(\w[\w\-]+\.)+[\w\-]+", search_term):
                 results = self.api.people_findByEmail(find_email=unicode(search_term))
@@ -87,6 +87,8 @@ class Flickr(InputPlugin):
         Returns a target dictionary
         """
         try:
+            if self.api is None:
+                self.api = self.getAuthenticatedAPI()
             results = self.api.people_getInfo(user_id=userId)
             if results.attrib['stat'] == 'ok':
                 target = {'pluginName': 'Flickr Plugin'}
@@ -110,7 +112,7 @@ class Flickr(InputPlugin):
         try:
             if not self.options_string:
                 self.options_string = self.readConfiguration("string_options")[1]
-            if not self.api:
+            if self.api is None:
                 self.api = self.getAuthenticatedAPI()
             self.api.people_findByUsername(username="testAPIKey");
             return (True, "")
@@ -120,6 +122,8 @@ class Flickr(InputPlugin):
             return (False, "Error establishing connection to Flickr API. ")
 
     def getPhotosByPage(self, userid, page_nr):
+        if self.api is None:
+            self.api = self.getAuthenticatedAPI()
         try:
             results = self.api.people_getPublicPhotos(user_id=userid, extras="geo, date_taken", per_page=500,
                                                       page=page_nr)
@@ -158,8 +162,10 @@ class Flickr(InputPlugin):
     def returnAnalysis(self, target, search_params):
         photosList = []
         locationsList = []
+        if self.api is None:
+            self.api = self.getAuthenticatedAPI()
         try:
-            results = self.api.people_getPublicPhotos(user_id=target['targetUserid'], extras="geo, date_taken",
+            results = self.api.people_getPublicPhotos(user_id=unicode(target['targetUserid']), extras="geo, date_taken",
                                                       per_page=500)
 
             if results.attrib['stat'] == 'ok':
@@ -174,12 +180,10 @@ class Flickr(InputPlugin):
                     photosList = results.find('photos').findall('photo')
 
                 locationsList = self.getLocationsFromPhotos(photosList)
-                return locationsList, None
-
         except FlickrError, err:
             logger.error("Error getting locations from Flickr")
             logger.error(err)
-
+        return locationsList, None
 
     def runConfigWizard(self):
         try:
@@ -189,6 +193,7 @@ class Flickr(InputPlugin):
             authorizationURL = flickr.auth_url(perms=u'read')
 
             self.wizard = QWizard()
+            self.wizard.setWindowTitle("Flickr plugin configuration wizard")
             page1 = QWizardPage()
             page2 = QWizardPage()
             layout1 = QVBoxLayout()
@@ -247,6 +252,6 @@ class Flickr(InputPlugin):
         '''
         if not self.labels:
             return key
-        if not key in self.labels.keys():
+        if key not in self.labels.keys():
             return key
         return self.labels[key]
