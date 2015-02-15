@@ -125,13 +125,16 @@ class Flickr(InputPlugin):
         if self.api is None:
             self.api = self.getAuthenticatedAPI()
         try:
-            results = self.api.people_getPublicPhotos(user_id=userid, extras="geo, date_taken", per_page=500,
+            results = self.api.people_getPublicPhotos(user_id=unicode(userid), extras="geo, date_taken", per_page=500,
                                                       page=page_nr)
             if results.attrib['stat'] == 'ok':
                 return results.find('photos').findall('photo')
+            else:
+                return []
         except Exception, err:
             logger.error("Error getting photos per page from Flickr")
             logger.error(err)
+            return []
 
     def getLocationsFromPhotos(self, photos):
         locations = []
@@ -175,7 +178,7 @@ class Flickr(InputPlugin):
                 logger.debug("Photo results from Flickr were " + str(pages) + " pages and " + total_photos + " photos.")
                 if pages > 1:
                     for i in range(1, pages + 1, 1):
-                        photosList.extend(self.getPhotosByPage(target['targetUserid'], i))
+                        photosList.extend(self.getPhotosByPage(unicode(str(target['targetUserid'])), i))
                 else:
                     photosList = results.find('photos').findall('photo')
 
