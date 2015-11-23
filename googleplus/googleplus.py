@@ -11,35 +11,37 @@ import dateutil.parser
 from PyQt4.QtGui import QWizard, QWizardPage, QLabel, QLineEdit, QVBoxLayout, QHBoxLayout, QMessageBox
 from PyQt4.QtCore import QUrl
 from PyQt4.QtWebKit import QWebView
-from utilities import GeneralUtilities
-
-#set up logging
+from utilities import GeneralUtilities, QtHandler
+# set up logging
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
 fh = logging.FileHandler(os.path.join(GeneralUtilities.getLogDir(), 'creepy_main.log'))
 fh.setLevel(logging.DEBUG)
 formatter = logging.Formatter('%(levelname)s:%(asctime)s  In %(filename)s:%(lineno)d: %(message)s')
 fh.setFormatter(formatter)
+guiLoggingHandler = QtHandler.QtHandler()
+guiLoggingHandler.setFormatter(formatter)
 logger.addHandler(fh)
+logger.addHandler(guiLoggingHandler)
 
 
 class Googleplus(InputPlugin):
 
     name = 'googleplus'
     hasWizard = True
+    hasRateLimitInfo = False
+    hasLocationBasedMode = False
 
     def __init__(self):
         # Try and read the labels file
-        # load cacerts from the bundled cacerts, otherwise calls in Windows will fail
-        self.http = httplib2.Http(ca_certs=os.path.join(os.getcwd(), 'cacerts.txt'))
+        self.http = httplib2.Http()
         labels_config = self.getConfigObj(self.name+'.labels')
         try:
-            logger.debug('Trying to load the labels file for the  {0} plugin .'.format(self.name))
             self.labels = labels_config['labels']
         except Exception, err:
             self.labels = None
             logger.error('Could not load the labels file for the  {0} plugin .'.format(self.name))
-            logger.exception(err)
+            logger.error(err)
         self.config, self.options_string = self.readConfiguration('string_options')
         self.options_boolean = self.readConfiguration('boolean_options')[1]
         self.service = None
@@ -84,6 +86,7 @@ class Googleplus(InputPlugin):
             return service
         except Exception, e:
             logger.error(e)
+            logger.error("Error getting an authentication context")
             return None
 
     def runConfigWizard(self):
@@ -108,11 +111,9 @@ class Googleplus(InputPlugin):
             codeLabel = QLabel('Code')
             inputCode = QLineEdit()
             inputCode.setObjectName('inputCode')
-
-
             html = QWebView()
-            #Url decode the authorization url so that scope and redirect url gets decoded.
-            #QWebView will fail to load the url correctly otherwise
+            # Url decode the authorization url so that scope and redirect url gets decoded.
+            # QWebView will fail to load the url correctly otherwise
             html.load(QUrl(urllib.unquote_plus(authorizationURL)))
 
             layout1.addWidget(label1a)
@@ -140,14 +141,13 @@ class Googleplus(InputPlugin):
                                      'We were unable to obtain the credentials for your account, please try to run the wizard again.')
 
         except Exception,err:
-            logger.exception(err)
-
+            logger.error(err)
 
     def showWarning(self, title, text):
         try:
             QMessageBox.warning(self.wizard, title, text)
         except Exception, err:
-            print err
+            logger(err)
 
     '''
     Returns a tuple. The first element is True or False, depending if the plugin is configured or not. The second
@@ -161,10 +161,8 @@ class Googleplus(InputPlugin):
             personDocument = peopleResource.get(userId='me').execute()
             return True, ''
         except Exception, err:
-            logger.exception(err)
+            logger.error(err)
             return False, err
-
-
 
     def returnAnalysis(self, target, search_params):
         if self.service is None:
@@ -183,20 +181,22 @@ class Googleplus(InputPlugin):
                         loc = {}
                         loc['plugin'] = "googleplus"
                         loc['context'] = activity['object']['content']
-                        loc['infowindow'] = self.constructContextInfoWindow(activity)
+                        loc['infowindow'] = self.constructContextInfoWindow(activity, target['targetUsername'])
                         loc['date'] = dateutil.parser.parse(activity['published'])
                         loc['lat'] = activity['location']['position']['latitude']
                         loc['lon'] = activity['location']['position']['longitude']
                         loc['shortName'] = activity['location']['displayName']
+                        loc['accuracy'] = 'high'
                         locations_list.append(loc)
                     elif hasattr(activity, 'geocode'):
                         loc = {}
                         loc['plugin'] = "googleplus"
                         loc['context'] = activity['object']['content']
-                        loc['infowindow'] = self.constructContextInfoWindow(activity)
+                        loc['infowindow'] = self.constructContextInfoWindow(activity, target['targetUsername'])
                         loc['date'] = dateutil.parser.parse(activity['published'])
                         loc['lat'], loc['lon'] = activity['geocode'].split(' ')
                         loc['shortName'] = activity['placeName']
+                        loc['accuracy'] = 'high'
                         locations_list.append(loc)
                 request = self.service.activities().list_next(request, activitiesDocument)
             logger.debug('{0} locations were retrieved from GooglePlus Plugin'.format(str(len(locations_list))))
@@ -205,11 +205,10 @@ class Googleplus(InputPlugin):
             logger.error("Error getting locations from GooglePlus plugin")
         return locations_list, None
 
-    def constructContextInfoWindow(self, activity):
+    def constructContextInfoWindow(self, activity, username):
         html = unicode(self.options_string['infowindow_html'], 'utf-8')
         return html.replace('@TEXT@', activity['object']['content']).replace('@DATE@', activity['published']).replace(
-            '@PLUGIN@', u'googleplus')
-
+            '@PLUGIN@', u'googleplus').replace('@USERNAME@', username)
 
     def getLabelForKey(self, key):
         '''

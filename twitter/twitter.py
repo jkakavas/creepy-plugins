@@ -8,116 +8,134 @@ import os
 import urllib
 import pytz
 from PyQt4.QtGui import QWizard, QWizardPage, QLabel, QLineEdit, QVBoxLayout, QHBoxLayout, QMessageBox
-from PyQt4.QtCore import QUrl
+from PyQt4.QtCore import QUrl, QString
 from PyQt4.QtWebKit import QWebView
 from tweepy import Cursor
 from configobj import ConfigObj
+from datetime import datetime
 from dominate.tags import *
 from collections import Counter
-from utilities import GeneralUtilities
+from utilities import GeneralUtilities, QtHandler
 
-#set up logging
+# set up logging
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
-fh = logging.FileHandler(os.path.join(GeneralUtilities.getLogDir(),'creepy_main.log'))
+fh = logging.FileHandler(os.path.join(GeneralUtilities.getLogDir(), 'creepy_main.log'))
 fh.setLevel(logging.DEBUG)
 formatter = logging.Formatter('%(levelname)s:%(asctime)s  In %(filename)s:%(lineno)d: %(message)s')
 fh.setFormatter(formatter)
+guiLoggingHandler = QtHandler.QtHandler()
+guiLoggingHandler.setFormatter(formatter)
 logger.addHandler(fh)
+logger.addHandler(guiLoggingHandler)
+
+
 class Twitter(InputPlugin):
-    
     name = "twitter"
     hasWizard = True
-    
+    hasLocationBasedMode = True
+    hasRateLimitInfo = True
+
     def __init__(self):
         # Try and read the labels file
-        labels_config = self.getConfigObj(self.name+'.labels')
+        labels_config = self.getConfigObj(self.name + '.labels')
         try:
-            logger.debug("Trying to load the labels file for the  "+self.name+" plugin .")
             self.labels = labels_config['labels']
-        except Exception,err:
-            self.labels = None 
-            logger.error("Could not load the labels file for the  "+self.name+" plugin .")  
-            logger.exception(err) 
+        except Exception, err:
+            self.labels = None
+            logger.error("Could not load the labels file for the  " + self.name + " plugin .")
+            logger.error(err)
 
         self.config, self.options_string = self.readConfiguration("string_options")
         self.options_boolean = self.readConfiguration("boolean_options")[1]
         self.api = None
-    
+        self.wizard = QWizard()
+
     def searchForTargets(self, search_term):
         possibleTargets = []
-        logger.debug("Searching for Targets from Twitter Plugin. Search term is : "+search_term)
+        logger.debug("Searching for Targets from Twitter Plugin. Search term is : " + search_term)
         try:
             if self.api is None:
                 self.api = self.getAuthenticatedAPI()
             search_results = self.api.search_users(q=search_term)
             if search_results:
-                logger.debug("Twitter returned  "+str(len(search_results))+" results")
+                logger.debug("Twitter returned  " + str(len(search_results)) + " results")
                 for i in search_results:
                     if self.options_boolean['exclude_geo_disabled'] == 'True' and not i.geo_enabled:
                         continue
-                    target = {'pluginName':'Twitter Plugin'}
+                    target = {'pluginName': 'Twitter Plugin'}
                     target['targetUserid'] = i.id_str
                     target['targetUsername'] = i.screen_name
                     target['targetPicture'] = 'profile_pic_%s' % i.id_str
                     target['targetFullname'] = i.name
-                    #save the pic in the temp folder to show it later
+                    # save the pic in the temp folder to show it later
                     filename = 'profile_pic_%s' % i.id_str
                     temp_file = os.path.join(os.getcwd(), "temp", filename)
-                    #Retieve and save the profile phot only if it does not exist
+                    # Retieve and save the profile phot only if it does not exist
                     if not os.path.exists(temp_file):
                         urllib.urlretrieve(i.profile_image_url, temp_file)
                     possibleTargets.append(target)
+        except tweepy.TweepError, e:
+            logger.error("Error authenticating with Twitter API.")
+            logger.error(e)
+            if e.response.status_code == 429:
+                remaining, limit, reset = self.getRateLimitStatus('search_users')
+            return False, "Error authenticating with Twitter: {0}. Your limits will be renewed at : {1}".format(
+                e.message, reset.strftime("%Y-%m-%d %H:%M:%S %z"))
         except Exception, err:
             logger.error(err)
             logger.error("Error searching for targets in Twitter plugin.")
         return possibleTargets
-    
+
     def getAuthenticatedAPI(self):
         try:
-            auth = tweepy.auth.OAuthHandler(self.options_string['hidden_application_key'], self.options_string['hidden_application_secret'])
-            auth.set_access_token(self.options_string['hidden_access_token'], self.options_string['hidden_access_token_secret'])
+            auth = tweepy.auth.OAuthHandler(self.options_string['hidden_application_key'],
+                                            self.options_string['hidden_application_secret'])
+            auth.set_access_token(self.options_string['hidden_access_token'],
+                                  self.options_string['hidden_access_token_secret'])
             return tweepy.API(auth)
-        except Exception,e:
+        except Exception, e:
             logger.error(e)
             return None
-    
+
     def runConfigWizard(self):
         try:
-            oAuthHandler = tweepy.OAuthHandler(self.options_string['hidden_application_key'], self.options_string['hidden_application_secret'])
+            oAuthHandler = tweepy.OAuthHandler(self.options_string['hidden_application_key'],
+                                               self.options_string['hidden_application_secret'])
             authorizationURL = oAuthHandler.get_authorization_url(True)
-            self.wizard = QWizard()
+
             self.wizard.setWindowTitle("Twitter plugin configuration wizard")
             page1 = QWizardPage()
             page2 = QWizardPage()
             layout1 = QVBoxLayout()
             layout2 = QVBoxLayout()
             layoutInputPin = QHBoxLayout()
-            
-            label1a = QLabel("Click next to connect to twitter.com . Please login with your account and follow the instructions in order to authorize creepy")
-            label2a = QLabel("Copy the PIN that you will receive once you authorize cree.py in the field below and click finish")
+
+            label1a = QLabel(
+                "Click next to connect to twitter.com . Please login with your account and follow the instructions in order to authorize creepy")
+            label2a = QLabel(
+                "Copy the PIN that you will receive once you authorize cree.py in the field below and click finish")
             pinLabel = QLabel("PIN")
             inputPin = QLineEdit()
             inputPin.setObjectName("inputPin")
-            
-            
+
             html = QWebView()
             html.load(QUrl(authorizationURL))
-            
+
             layout1.addWidget(label1a)
             layout2.addWidget(html)
             layout2.addWidget(label2a)
             layoutInputPin.addWidget(pinLabel)
             layoutInputPin.addWidget(inputPin)
             layout2.addLayout(layoutInputPin)
-            
+
             page1.setLayout(layout1)
             page2.setLayout(layout2)
             page2.registerField("inputPin*", inputPin)
             self.wizard.addPage(page1)
             self.wizard.addPage(page2)
-            self.wizard.resize(800,600)
-            
+            self.wizard.resize(800, 600)
+
             if self.wizard.exec_():
                 try:
                     oAuthHandler.get_access_token(str(self.wizard.field("inputPin").toString()).strip())
@@ -126,18 +144,19 @@ class Twitter(InputPlugin):
                     self.config.write()
                 except Exception, err:
                     logger.error(err)
-                    self.showWarning("Error completing the wizard", "We were unable to obtain the access token for your account, please try to run the wizard again.")
-            
-        except Exception,err:
-            logger.exception(err)
-        
-        
+                    self.showWarning("Error completing the wizard",
+                                     "We were unable to obtain the access token for your account, please try to run the wizard again. Error was {0}".format(
+                                         err.message))
+
+        except Exception, err:
+            logger.error(err)
+            self.showWarning('Error completing the wizard', 'Error was: {0}'.format(err.message))
+
     def showWarning(self, title, text):
         try:
-            QMessageBox.warning(self.wizard, title, text)  
+            QMessageBox.warning(self.wizard, title, text)
         except Exception, err:
-            print err
-        
+            logger.error(err)
 
     def getAuthorizationURL(self):
         """
@@ -147,20 +166,15 @@ class Twitter(InputPlugin):
         try:
             if not self.options_string:
                 self.options_string = self.readConfiguration("string_options")[1]
-            oAuthHandler = tweepy.OAuthHandler(self.options_string['hidden_application_key'], self.options_string['hidden_application_secret'])
+            oAuthHandler = tweepy.OAuthHandler(self.options_string['hidden_application_key'],
+                                               self.options_string['hidden_application_secret'])
             authorizationURL = oAuthHandler.get_authorization_url(True)
             return authorizationURL
         except Exception, err:
-            logger.error(err.reason)
+            logger.error(err)
             return None
-        
-    """
-    Returns a tuple. The first element is True or False, depending if the plugin is configured or not. The second
-    element contains an optional message for the user
-    """
 
     def isConfigured(self):
-        
         """
         :return: a tuple. The first element is True or False, depending if the plugin is configured or not. The second
         element contains an optional message for the user
@@ -169,16 +183,21 @@ class Twitter(InputPlugin):
             if not self.options_string:
                 self.options_string = self.readConfiguration("string_options")[1]
             if self.api is None:
-                oAuthHandler = tweepy.OAuthHandler(self.options_string['hidden_application_key'], self.options_string['hidden_application_secret'])
-                oAuthHandler.set_access_token(self.options_string['hidden_access_token'], self.options_string['hidden_access_token_secret'])
+                oAuthHandler = tweepy.OAuthHandler(self.options_string['hidden_application_key'],
+                                                   self.options_string['hidden_application_secret'])
+                oAuthHandler.set_access_token(self.options_string['hidden_access_token'],
+                                              self.options_string['hidden_access_token_secret'])
                 self.api = tweepy.API(oAuthHandler)
             logger.debug(self.api.me().name)
-            return (True, "")
+            return True, ""
+        except tweepy.TweepError, e:
+            logger.error("Error authenticating with Twitter API.")
+            logger.error(e)
+            return False, "Error authenticating with Twitter. " + e.message
         except Exception, e:
             logger.error("Error authenticating with Twitter API.")
             logger.error(e)
-            return (False, "Error authenticating with Twitter. "+e.reason)
-
+            return False, "Error authenticating with Twitter. " + e.reason
 
     def returnAnalysis(self, target, search_params):
         """
@@ -197,11 +216,12 @@ class Twitter(InputPlugin):
         if not self.api:
             self.api = self.getAuthenticatedAPI()
         try:
-            logger.debug("Attempting to retrieve profile information for "+target['targetUserid'])
+            logger.debug("Attempting to retrieve profile information for " + target['targetUsername'])
             userObject = self.api.get_user(user_id=target['targetUserid'])
             twitterDiv += p('Account was created on {0}'.format(userObject.created_at.strftime("%Y-%m-%d %H:%M:%S %z")))
             if userObject.statuses_count:
-                twitterDiv += p('The user has tweeted {0} times ( including retweets ).'.format(str(userObject.statuses_count)))
+                twitterDiv += p(
+                    'The user has tweeted {0} times ( including retweets ).'.format(str(userObject.statuses_count)))
             if userObject.name:
                 twitterDiv += p(u'Self-reported real name: {0}'.format(userObject.name))
             if userObject.description:
@@ -225,8 +245,9 @@ class Twitter(InputPlugin):
             if userObject.listed_count:
                 twitterDiv += p('The user is listed in {0} public lists.'.format(str(userObject.listed_count)))
 
-            logger.debug("Attempting to retrieve the tweets for user "+target['targetUserid'])
-            tweets = Cursor(self.api.user_timeline, user_id=target['targetUserid'], exclude_replies=excl_rpls, include_rts=incl_rts).items()
+            logger.debug("Attempting to retrieve the tweets for user " + target['targetUsername'])
+            tweets = Cursor(self.api.user_timeline, count=100, user_id=target['targetUserid'],
+                            exclude_replies=excl_rpls, include_rts=incl_rts).items()
             timestamps = []
             repliedTo = []
             retweeted = []
@@ -260,74 +281,31 @@ class Twitter(InputPlugin):
                     if hasattr(i, 'hashtags'):
                         for hashtag in i.entities.hashtags:
                             hashtags.append(hashtag.text)
+                loc = self.buildLocationFromTweet(i, finalDateTimeObj)
+                if loc:
+                    locations_list.append(loc)
 
-                #Location Analysis
-                ''' 
-                First Handle the coordinates return field
-                Twitter API returns GeoJSON, see http://www.geojson.org/geojson-spec.html for the spec    
-                We don't handle MultiPoint, LineString, MultiLineString, MultiPolygon and Geometry Collection
-                '''
-                if i.coordinates and i.place:
-                    if i.coordinates['type'] == 'Point':
-                        loc = {}
-                        loc['plugin'] = "twitter"
-                        #this returns unicode!
-                        loc['context'] = i.text
-                        loc['infowindow'] = self.constructContextInfoWindow(i, finalDateTimeObj)
-                        loc['date'] = finalDateTimeObj
-                        loc['lat'] = i.coordinates['coordinates'][1]
-                        loc['lon'] = i.coordinates['coordinates'][0]
-                        loc['shortName'] = i.place.name
-                        locations_list.append(loc)     
-                    elif i.coordinates.type == 'PolyGon':
-                        loc = {}
-                        loc['plugin'] = "twitter"
-                        loc['context'] = i.text   
-                        loc['infowindow'] = self.constructContextInfoWindow(i, finalDateTimeObj)
-                        loc['date'] = finalDateTimeObj
-                        c = self.getCenterOfPolygon(i.coordinates['coordinates'])
-                        loc['lat'] = c[1]
-                        loc['lon'] = c[0]
-                        loc['shortName'] = i.place.name
-                        locations_list.append(loc)                          
-                elif i.place and not i.coordinates:
-                    if i.place.bounding_box.type == 'Point':
-                        loc = {}
-                        loc['plugin'] = "twitter"
-                        loc['context'] = i.text    
-                        loc['infowindow'] = self.constructContextInfoWindow(i, finalDateTimeObj)
-                        loc['date'] = finalDateTimeObj
-                        loc['lat'] = i.place.bounding_box.coordinates[1]
-                        loc['lon'] = i.place.bounding_box.coordinates[0]
-                        loc['shortName'] = i.place.name
-                        locations_list.append(loc)        
-                    elif i.place.bounding_box.type == 'Polygon':
-                        loc = {}
-                        loc['plugin'] = "twitter"
-                        loc['context'] = i.text        
-                        loc['infowindow'] = self.constructContextInfoWindow(i, finalDateTimeObj)
-                        loc['date'] = finalDateTimeObj
-                        c = self.getCenterOfPolygon(i.place.bounding_box.coordinates[0])
-                        loc['lat'] = c[1]
-                        loc['lon'] = c[0]
-                        loc['shortName'] = i.place.name
-                        locations_list.append(loc)  
-            logger.debug(str(len(locations_list))+ " locations were retrieved from Twitter Plugin")
+            logger.debug("{0} locations were retrieved from Twitter Plugin".format(len(locations_list)))
             if len(repliedTo) > 0:
                 twitterDiv += p('User has replied to the following users : ')
-                repliedToTable = self.createFrequencyTableFromCounter(Counter(repliedTo), 'User screen name', 'repliedToTable', 10)
+                repliedToTable = self.createFrequencyTableFromCounter(Counter(repliedTo), 'User screen name',
+                                                                      'repliedToTable', 10)
                 twitterDiv += repliedToTable
             if len(retweeted) > 0:
                 twitterDiv += p('User has retweeted the following users : ')
-                retweetedTable = self.createFrequencyTableFromCounter(Counter(retweeted), 'User screen name', 'retweetedTable', 10)
+                retweetedTable = self.createFrequencyTableFromCounter(Counter(retweeted), 'User screen name',
+                                                                      'retweetedTable', 10)
                 twitterDiv += retweetedTable
             if len(mentioned) > 0:
                 twitterDiv += p('User has mentioned the following users : ')
-                mentionedTable = self.createFrequencyTableFromCounter(Counter(mentioned), 'User screen name', 'mentionedTable', 10)
+                mentionedTable = self.createFrequencyTableFromCounter(Counter(mentioned), 'User screen name',
+                                                                      'mentionedTable', 10)
                 twitterDiv += mentionedTable
             if len(clientApplications) > 0:
                 twitterDiv += p('User has been using the following clients : ')
-                clientApplicationsTable = self.createFrequencyTableFromCounter(Counter(clientApplications), 'Client Application', 'clientApplicationsTable', 10)
+                clientApplicationsTable = self.createFrequencyTableFromCounter(Counter(clientApplications),
+                                                                               'Client Application',
+                                                                               'clientApplicationsTable', 10)
                 twitterDiv += clientApplicationsTable
             if len(hashtags) > 0:
                 twitterDiv += p('User has used the following hashtags : ')
@@ -335,16 +313,116 @@ class Twitter(InputPlugin):
                 twitterDiv += hashtagsTable
             if len(timestamps) > 0:
                 twitterDiv += p('User tweets time frequency: ')
-                hourPeriodsTable = self.createFrequencyTableFromList(self.getTimeChunksFrequency(timestamps, 8), 'Hour Period', 'hourPeriodsTable')
+                hourPeriodsTable = self.createFrequencyTableFromList(self.getTimeChunksFrequency(timestamps, 8),
+                                                                     'Hour Period', 'hourPeriodsTable')
                 twitterDiv += hourPeriodsTable
                 twitterDiv += p('User has been twitting at the following times : ')
-                hoursTable = self.createFrequencyTableFromCounter(Counter([d.hour for d in timestamps]), 'Hour', 'hoursTable', 24)
+                hoursTable = self.createFrequencyTableFromCounter(Counter([d.hour for d in timestamps]), 'Hour',
+                                                                  'hoursTable', 24)
                 twitterDiv += hoursTable
-
+        except tweepy.TweepError, e:
+            logger.error("Error authenticating with Twitter API.")
+            logger.error(e)
+            if e.response.status_code == 429:
+                remaining, limit, reset = self.getRateLimitStatus('user_timeline')
+                logger.error(
+                    "Error getting locations from twitter plugin: {0}. Your limits will be renewed at : {1}".format(
+                        e.message, reset.strftime("%Y-%m-%d %H:%M:%S %z")))
         except Exception, e:
             logger.error(e)
             logger.error("Error getting locations from twitter plugin")
         return locations_list, twitterDiv
+
+    def searchForResultsNearPlace(self, geocode):
+        locations_list = []
+        logger.debug("Attempting to retrieve tweets around {0}".format(geocode))
+        try:
+            if self.api is None:
+                self.api = self.getAuthenticatedAPI()
+            tweets = Cursor(self.api.search, count=100, q='*', geocode=geocode, result_type="recent").items()
+            for i in tweets:
+                finalDateTimeObj = pytz.utc.localize(i.created_at)
+                loc = self.buildLocationFromTweet(i, finalDateTimeObj)
+                if loc:
+                    locations_list.append(loc)
+        except tweepy.TweepError, e:
+            logger.error("Error authenticating with Twitter API.")
+            logger.error(e)
+            if e.response.status_code == 429:
+                remaining, limit, reset = self.getRateLimitStatus('search_near_location')
+                logger.error(
+                    "Error getting locations from twitter plugin: {0}. Your limits will be renewed at : {1}".format(
+                        e.message, reset.strftime("%Y-%m-%d %H:%M:%S %z")))
+        except Exception, e:
+            logger.error(e)
+            logger.error("Error getting locations from twitter plugin")
+        return locations_list
+
+    def getRateLimitStatus(self, query):
+        try:
+            if self.api is None:
+                self.api = self.getAuthenticatedAPI()
+            reply = self.api.rate_limit_status()
+            if query == 'search_users':
+                remaining, limit, reset = reply['resources']['users']['/users/search']['remaining'], \
+                                          reply['resources']['users']['/users/search']['limit'], \
+                                          reply['resources']['users']['/users/search']['reset']
+            elif query == 'search_near_location':
+                remaining, limit, reset = reply['resources']['search']['/search/tweets']['remaining'], \
+                                          reply['resources']['search']['/search/tweets']['limit'], \
+                                          reply['resources']['search']['/search/tweets']['reset']
+            elif query == 'user_timeline':
+                remaining, limit, reset = reply['resources']['statuses']['/statuses/user_timeline']['remaining'], \
+                                          reply['resources']['statuses']['/statuses/user_timeline']['limit'], \
+                                          reply['resources']['statuses']['/statuses/user_timeline']['reset']
+            elif query == 'all':
+                return reply['resources']['users']['/users/search'], reply['resources']['search']['/search/tweets'], \
+                       reply['resources']['statuses']['/statuses/user_timeline']
+            return remaining, limit, datetime.fromtimestamp(reset)
+        except Exception, e:
+            logger.error(e)
+            logger.error("Error getting rate limit status from twitter plugin")
+
+    def buildLocationFromTweet(self, i, finalDateTimeObj):
+        """
+        First Handle the coordinates return field
+        Twitter API returns GeoJSON, see http://www.geojson.org/geojson-spec.html for the spec
+        We don't handle MultiPoint, LineString, MultiLineString, MultiPolygon and Geometry Collection
+        """
+        loc = {}
+        loc['plugin'] = "twitter"
+        loc['username'] = i.user.screen_name
+        loc['context'] = i.text
+        loc['date'] = finalDateTimeObj
+        loc['infowindow'] = self.constructContextInfoWindow(i, finalDateTimeObj)
+        if i.coordinates and i.place:
+            if i.coordinates['type'] == 'Point':
+                loc['lat'] = i.coordinates['coordinates'][1]
+                loc['lon'] = i.coordinates['coordinates'][0]
+                loc['shortName'] = i.place.name
+                loc['accuracy'] = 'high'
+            elif i.coordinates.type == 'PolyGon':
+                c = self.getCenterOfPolygon(i.coordinates['coordinates'])
+                loc['lat'] = c[1]
+                loc['lon'] = c[0]
+                loc['shortName'] = i.place.name
+                loc['accuracy'] = 'low'
+            return loc
+        elif i.place and not i.coordinates:
+            if i.place.bounding_box.type == 'Point':
+                loc['lat'] = i.place.bounding_box.coordinates[1]
+                loc['lon'] = i.place.bounding_box.coordinates[0]
+                loc['shortName'] = i.place.name
+                loc['accuracy'] = 'high'
+            elif i.place.bounding_box.type == 'Polygon':
+                c = self.getCenterOfPolygon(i.place.bounding_box.coordinates[0])
+                loc['lat'] = c[1]
+                loc['lon'] = c[0]
+                loc['shortName'] = i.place.name
+                loc['accuracy'] = 'low'
+            return loc
+        else:
+            return {}
 
     def getTimeChunksFrequency(self, timestamps, chunkSize):
         hourFreq = Counter([d.hour for d in timestamps])
@@ -387,11 +465,13 @@ class Twitter(InputPlugin):
         return objectTable
 
     def constructContextInfoWindow(self, tweet, finalDateTimeObj):
-        
+
         html = unicode(self.options_string['infowindow_html'], 'utf-8')
-        #returned value also becomes unicode since tweet.text is unicode, and carries the encoding also
-        return html.replace("@TEXT@",tweet.text).replace("@DATE@", finalDateTimeObj.strftime("%Y-%m-%d %H:%M:%S %z")).replace("@PLUGIN@", u"twitter")
-    
+        # returned value also becomes unicode since tweet.text is unicode, and carries the encoding also
+        return html.replace("@TEXT@", tweet.text).replace("@DATE@",
+                                                          finalDateTimeObj.strftime("%Y-%m-%d %H:%M:%S %z")).replace(
+            "@PLUGIN@", u"twitter").replace("@USERNAME@", tweet.user.screen_name).replace("@LINK@", "https://twitter.com/statuses/{0}".format(tweet.id_str))
+
     def getCenterOfPolygon(self, coord):
         '''
         We need to get the "center" of the polygon. Accuracy is not a major aspect here since
@@ -411,11 +491,10 @@ class Twitter(InputPlugin):
             lat_list.append(j[1])
         lon_list.sort()
         lat_list.sort()
-        lat = float(lat_list[0]) + ((float(lat_list[len(lat_list)-1]) - float(lat_list[0])) / 2)
-        lon = float(lon_list[0]) + ((float(lon_list[len(lon_list)-1]) - float(lon_list[0])) / 2)
+        lat = float(lat_list[0]) + ((float(lat_list[len(lat_list) - 1]) - float(lat_list[0])) / 2)
+        lon = float(lon_list[0]) + ((float(lon_list[len(lon_list) - 1]) - float(lon_list[0])) / 2)
         return (lon, lat)
-    
-    
+
     def getLabelForKey(self, key):
         '''
         read the plugin_name.labels 
@@ -429,7 +508,6 @@ class Twitter(InputPlugin):
 
     def getAnalysisDocument(self):
         pass
-
 
     def sliceLinkedList(self, lst, chunkSize):
         n = len(lst)
